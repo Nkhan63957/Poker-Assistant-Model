@@ -289,4 +289,111 @@ with col2:
     st.write('**Your Cards**')
     cols = st.columns(2)
     for i, card in enumerate(hole_cards):
-        cols[i].image(card_image(Card.int_to_pretty_str(card)), caption=Card.int_to_pretty_str(card), width=
+        cols[i].image(card_image(Card.int_to_pretty_str(card)), caption=Card.int_to_pretty_str(card), width=80)
+    if community_cards:
+        st.write('**Community Cards**')
+        cols = st.columns(len(community_cards))
+        for i, card in enumerate(community_cards):
+            cols[i].image(card_image(Card.int_to_pretty_str(card)), caption=Card.int_to_pretty_str(card), width=80)
+
+# Make prediction
+with torch.no_grad():
+    q_values = model(card_input, state_input)
+    action_probs = torch.softmax(q_values, dim=1).cpu().numpy()[0]
+    action = torch.argmax(q_values, dim=1).item()
+
+# Evaluate hand strength
+rank_class, rank, equity, percentile = evaluate_hand(hole_cards, community_cards, num_opponents)
+
+# Store prediction in history
+prediction_entry = {
+    'Timestamp': pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S'),
+    'Hole Cards': ', '.join([Card.int_to_pretty_str(c) for c in hole_cards]),
+    'Community Cards': ', '.join([Card.int_to_pretty_str(c) for c in community_cards]) if community_cards else 'None',
+    'Stage': stage,
+    'Recommended Action': ['Fold', 'Call', 'Raise'][action],
+    'Equity': f'{equity:.2%}',
+    'Hand Strength Percentile': f'{percentile:.1f}%'
+}
+st.session_state.prediction_history.append(prediction_entry)
+if len(st.session_state.prediction_history) > 10:
+    st.session_state.prediction_history = st.session_state.prediction_history[-10:]
+
+# Display results
+st.subheader('Prediction')
+action_names = ['Fold', 'Call', 'Raise']
+st.write(f'The model recommends to **{action_names[action]}**.')
+st.write(f'Estimated Hand Equity: **{equity:.2%}** (against {num_opponents} opponent(s))')
+st.write(f'Hand Strength Percentile: **{percentile:.1f}%** (top {100-percentile:.1f}% of possible hands)')
+
+# Action probabilities
+st.subheader('Action Probabilities')
+prob_df = pd.DataFrame({
+    'Action': action_names,
+    'Probability': [f'{p:.2%}' for p in action_probs]
+})
+st.write(prob_df)
+
+fig = px.bar(
+    x=action_names,
+    y=action_probs,
+    title='Action Probability Distribution',
+    labels={'x': 'Action', 'y': 'Probability'},
+    text=[f'{p:.2%}' for p in action_probs]
+)
+fig.update_traces(textposition='auto')
+fig.update_yaxes(range=[0, 1], tickformat='.0%')
+st.plotly_chart(fig)
+
+# In-depth analysis
+st.subheader('In-Depth Analysis')
+pot_odds = avg_opp_bet / (pot + avg_opp_bet) if avg_opp_bet > 0 else 0
+st.write(f'**Pot Odds**: {pot_odds:.2%} (you need {pot_odds:.2%} equity to break even on a call)')
+
+# Stage-specific insights
+stage_insights = {
+    'Preflop': f"In the preflop stage, your hand's equity ({equity:.2%}) is based on starting hand strength against {num_opponents} opponent(s). With a percentile of {percentile:.1f}%, your hand is {'strong' if percentile > 80 else 'medium' if percentile > 50 else 'weak'}. {'Consider raising with strong hands to build the pot.' if percentile > 80 else 'Play cautiously unless position or odds favor you.'}",
+    'Flop': f"On the flop, your equity ({equity:.2%}) reflects your hand's strength with three community cards. A percentile of {percentile:.1f}% indicates {'a strong made hand or draw' if percentile > 70 else 'a moderate hand' if percentile > 40 else 'a weak hand or weak draw'}. {'Aggression may be warranted with strong hands or draws.' if percentile > 70 else 'Evaluate draws carefully against pot odds.'}",
+    'Turn': f"On the turn, with four community cards, your equity ({equity:.2%}) is more defined. Your hand's percentile ({percentile:.1f}%) suggests {'a strong hand or draw' if percentile > 65 else 'a marginal hand' if percentile > 35 else 'a weak hand'}. {'Protect strong hands with bets; consider folding weak hands unless odds are favorable.' if percentile > 65 else 'Be cautious with marginal hands.'}",
+    'River': f"On the river, your hand is fully defined with equity ({equity:.2%}) and percentile ({percentile:.1f}%). This indicates {'a strong hand' if percentile > 60 else 'a medium hand' if percentile > 30 else 'a weak hand'}. {'Value bet strong hands; bluff selectively with weak hands.' if percentile > 60 else 'Check or fold unless pot odds justify a call.'}"
+}
+st.write(f'**Stage Insight ({stage})**: {stage_insights[stage]}')
+
+# Action analysis
+st.write('**Action Analysis**:')
+for i, action_name in enumerate(action_names):
+    expected_value = 0
+    if action_name == 'Fold':
+        expected_value = 0
+        analysis = "Folding avoids further risk but forfeits the current pot. Recommended with weak hands or poor pot odds."
+    elif action_name == 'Call':
+        if equity > pot_odds + 0.1:
+            expected_value = (equity * pot) - ((1 - equity) * avg_opp_bet)
+            analysis = f"Calling is profitable with {equity:.2%} equity against {pot_odds:.2%} pot odds. Expected value: ${expected_value:.2f}."
+        elif equity > pot_odds:
+            expected_value = (equity * pot) - ((1 - equity) * avg_opp_bet)
+            analysis = f"Calling is marginal with {equity:.2%} equity close to {pot_odds:.2%} pot odds. Expected value: ${expected_value:.2f}."
+        else:
+            expected_value = (equity * pot) - ((1 - equity) * avg_opp_bet)
+            analysis = f"Calling may be unprofitable with {equity:.2%} equity below {pot_odds:.2%} pot odds. Expected value: ${expected_value:.2f}."
+    else:  # Raise
+        raise_amount = avg_opp_bet * 2 if avg_opp_bet > 0 else 20
+        if equity > 0.6:
+            expected_value = (equity * (pot + raise_amount)) - ((1 - equity) * (avg_opp_bet + raise_amount))
+            analysis = f"Raising with a strong hand ({equity:.2%} equity) can build the pot or force folds. Expected value: ${expected_value:.2f}."
+        elif equity > 0.4 and avg_opp_aggression < 0.5:
+            expected_value = (equity * (pot + raise_amount)) - ((1 - equity) * (avg_opp_bet + raise_amount))
+            analysis = f"Raising as a semi-bluff with {equity:.2%} equity may induce folds from less aggressive opponents. Expected value: ${expected_value:.2f}."
+        else:
+            expected_value = (equity * (pot + raise_amount)) - ((1 - equity) * (avg_opp_bet + raise_amount))
+            analysis = f"Raising with {equity:.2%} equity is risky against aggressive opponents. Expected value: ${expected_value:.2f}."
+
+    st.write(f"- **{action_name}**: {analysis}")
+
+# Prediction history
+st.subheader('Prediction History (Last 10)')
+if st.session_state.prediction_history:
+    history_df = pd.DataFrame(st.session_state.prediction_history)
+    st.write(history_df)
+else:
+    st.write("No predictions yet.")
