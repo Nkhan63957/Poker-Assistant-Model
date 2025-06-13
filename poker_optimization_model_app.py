@@ -7,7 +7,7 @@ Original file is located at
     https://colab.research.google.com/drive/15YqJ5zuBzvZEFsLVe46LQO3d34IpwcU_
 """
 
-!mkdir -p streamlit_app
+
 
 # Commented out IPython magic to ensure Python compatibility.
 # %%writefile streamlit_app/app.py
