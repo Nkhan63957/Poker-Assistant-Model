@@ -9,8 +9,7 @@ Original file is located at
 
 
 
-# Commented out IPython magic to ensure Python compatibility.
-# %%writefile streamlit_app/app.py
+# Commented out IPython magic to ensure Python compatibility
 # import streamlit as st
 # import torch
 # import torch.nn as nn
@@ -412,7 +411,4 @@ Original file is located at
 #     st.write("No predictions yet.")
 #
 
-!pip install -q streamlit treys
-!npm install localtunnel
-!wget -q -O - ipv4.icanhazip.com
-!streamlit run streamlit_app/app.py & npx localtunnel --port 8501
+
