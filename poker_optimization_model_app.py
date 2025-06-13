@@ -5,6 +5,8 @@ import numpy as np
 from treys import Card, Evaluator
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
+import math
 
 # Define PokerQNetwork class (original with 10 state features)
 class PokerQNetwork(nn.Module):
@@ -124,9 +126,13 @@ st.set_page_config(page_title="Advanced Poker AI Predictor", page_icon="🃏", l
 st.title('Advanced Poker AI Predictor')
 st.write('This app uses a deep Q-learning model to predict the best action in Texas Hold\'em, supporting multiple opponents, visual card selection, and detailed analysis.')
 
-# Initialize session state for prediction history
+# Initialize session state
 if 'prediction_history' not in st.session_state:
     st.session_state.prediction_history = []
+if 'dealer_idx' not in st.session_state:
+    st.session_state.dealer_idx = 0  # Default: User is dealer
+if 'user_seat_idx' not in st.session_state:
+    st.session_state.user_seat_idx = 0  # Default: User in Seat 1
 
 # Load the model
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -140,13 +146,44 @@ except FileNotFoundError:
     st.stop()
 
 # Sidebar for user inputs
-st.sidebar.header('Game State Inputs')
+st.sidebar.header('Table Setup')
 
 # Number of opponents
 num_opponents = st.sidebar.selectbox('Number of Opponents', [1, 2, 3, 4, 5], index=0)
+total_players = num_opponents + 1  # User + opponents
+
+# Dealer position
+dealer_options = ['User'] + [f'Opponent {i+1}' for i in range(num_opponents)]
+dealer = st.sidebar.selectbox('Dealer Position', dealer_options, index=st.session_state.dealer_idx)
+dealer_idx = 0 if dealer == 'User' else int(dealer.split()[-1])
+st.session_state.dealer_idx = dealer_idx
+
+# User seat
+user_seat = st.sidebar.selectbox('Your Seat', [f'Seat {i+1}' for i in range(total_players)], index=st.session_state.user_seat_idx)
+user_seat_idx = int(user_seat.split()[-1]) - 1
+st.session_state.user_seat_idx = user_seat_idx
+
+# Calculate positions
+positions = []
+for i in range(total_players):
+    rel_pos = (i - dealer_idx) % total_players
+    if total_players == 2:
+        pos = 'Small Blind' if rel_pos == 1 else 'Big Blind/Button'
+    elif total_players == 3:
+        pos = 'Small Blind' if rel_pos == 1 else 'Big Blind' if rel_pos == 2 else 'Button'
+    elif total_players == 4:
+        pos = 'Small Blind' if rel_pos == 1 else 'Big Blind' if rel_pos == 2 else 'UTG' if rel_pos == 3 else 'Button'
+    elif total_players == 5:
+        pos = 'Small Blind' if rel_pos == 1 else 'Big Blind' if rel_pos == 2 else 'UTG' if rel_pos == 3 else 'Cutoff' if rel_pos == 4 else 'Button'
+    else:  # 6 players
+        pos = 'Small Blind' if rel_pos == 1 else 'Big Blind' if rel_pos == 2 else 'UTG' if rel_pos == 3 else 'UTG+1' if rel_pos == 4 else 'Cutoff' if rel_pos == 5 else 'Button'
+    positions.append(pos)
+
+user_position = positions[user_seat_idx]
+position_bonus = 0.0 if user_position in ['Small Blind', 'Big Blind'] else 0.1 if user_position.startswith('UTG') else 0.2
 
 # Visual card picker
-st.sidebar.subheader('Card Selection')
+st.sidebar.header('Card Selection')
 suits = ['♥', '♠', '♦', '♣']
 ranks = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A']
 deck = [f"{r}{s}" for r in ranks for s in suits]
@@ -160,7 +197,7 @@ def card_image(card_str):
     return image_url
 
 # Hole cards
-st.sidebar.write('**Hole Cards**')
+st.sidebar.subheader('**Hole Cards**')
 hole_cols = st.sidebar.columns(2)
 hole_cards = []
 selected_cards = []
@@ -198,26 +235,87 @@ if len(hole_cards) != 2:
     st.error("Please select both hole cards.")
     st.stop()
 
-# Game state inputs for player and opponents
-st.sidebar.subheader('Game State')
+# Game state inputs
+st.sidebar.header('Game State')
+small_blind = st.sidebar.number_input('Small Blind ($)', min_value=0, max_value=100, value=5, step=1)
+big_blind = st.sidebar.number_input('Big Blind ($)', min_value=small_blind, max_value=200, value=10, step=1)
+if big_blind < small_blind:
+    st.error("Big blind must be at least as large as small blind.")
+    st.stop()
+
 pot = st.sidebar.number_input('Pot Size ($)', min_value=0, max_value=5000, value=50, step=1)
 player_stack = st.sidebar.number_input('Your Stack ($)', min_value=0, max_value=10000, value=1000, step=1)
-player_bet = st.sidebar.number_input('Your Current Bet ($)', min_value=0, max_value=1000, value=0, step=1)
-position = st.sidebar.selectbox('Position', ['Early', 'Middle', 'Late'])
+player_bet = st.sidebar.number_input('Your Current Bet ($)', min_value=0, max_value=player_stack, value=0, step=1)
+
+# Validate blinds against stacks
+sb_idx = (dealer_idx + 1) % total_players
+bb_idx = (dealer_idx + 2) % total_players
+if user_seat_idx == sb_idx and small_blind > player_stack:
+    st.error("Small blind exceeds your stack.")
+    st.stop()
+if user_seat_idx == bb_idx and big_blind > player_stack:
+    st.error("Big blind exceeds your stack.")
+    st.stop()
+
+# Adjust for blinds in preflop
+if stage == 'Preflop':
+    if user_seat_idx == sb_idx:
+        player_bet = max(player_bet, small_blind)
+        player_stack = max(0, player_stack - small_blind)
+        pot += small_blind
+    elif user_seat_idx == bb_idx:
+        player_bet = max(player_bet, big_blind)
+        player_stack = max(0, player_stack - big_blind)
+        pot += big_blind
+
+# Validate player bet
+if player_bet > player_stack:
+    st.error("Your bet cannot exceed your stack.")
+    st.stop()
 
 opponent_data = []
-for opp in range(num_opponents):
-    with st.sidebar.expander(f"Opponent {opp+1}"):
-        opp_stack = st.number_input(f'Opponent {opp+1} Stack ($)', min_value=0, max_value=10000, value=1000, step=1, key=f'opp_stack_{opp}')
-        opp_bet = st.number_input(f'Opponent {opp+1} Bet ($)', min_value=0, max_value=1000, value=10, step=1, key=f'opp_bet_{opp}')
-        opp_folded = st.checkbox(f'Opponent {opp+1} Folded', value=False, key=f'opp_folded_{opp}')
-        opp_aggression = st.number_input(f'Opponent {opp+1} Aggression (0-1)', min_value=0.0, max_value=1.0, value=0.5, step=0.01, key=f'opp_agg_{opp}')
-        opponent_data.append({
-            'stack': opp_stack,
-            'bet': opp_bet,
-            'folded': opp_folded,
-            'aggression': opp_aggression
-        })
+opp_seat_idx = 0
+seat_to_opp = {}
+for i in range(total_players):
+    if i != user_seat_idx:
+        opp_idx = opp_seat_idx
+        seat_to_opp[i] = opp_idx
+        with st.sidebar.expander(f"Opponent {opp_idx+1} ({positions[i]})"):
+            opp_stack = st.number_input(f'Opponent {opp_idx+1} Stack ($)', min_value=0, max_value=10000, value=1000, step=1, key=f'opp_stack_{opp_idx}')
+            opp_bet = st.number_input(f'Opponent {opp_idx+1} Bet ($)', min_value=0, max_value=opp_stack, value=10, step=1, key=f'opp_bet_{opp_idx}')
+            opp_folded = st.checkbox(f'Opponent {opp_idx+1} Folded', value=False, key=f'opp_folded_{opp_idx}')
+            opp_aggression = st.number_input(f'Opponent {opp_idx+1} Aggression (0-1)', min_value=0.0, max_value=1.0, value=0.5, step=0.01, key=f'opp_agg_{opp_idx}')
+            if stage == 'Preflop':
+                if i == sb_idx:
+                    if small_blind > opp_stack:
+                        st.error(f"Small blind exceeds Opponent {opp_idx+1}'s stack.")
+                        st.stop()
+                    opp_bet = max(opp_bet, small_blind)
+                    opp_stack = max(0, opp_stack - small_blind)
+                    pot += small_blind
+                elif i == bb_idx:
+                    if big_blind > opp_stack:
+                        st.error(f"Big blind exceeds Opponent {opp_idx+1}'s stack.")
+                        st.stop()
+                    opp_bet = max(opp_bet, big_blind)
+                    opp_stack = max(0, opp_stack - big_blind)
+                    pot += big_blind
+            if opp_bet > opp_stack:
+                st.error(f"Opponent {opp_idx+1}'s bet cannot exceed their stack.")
+                st.stop()
+            opponent_data.append({
+                'stack': opp_stack,
+                'bet': opp_bet,
+                'folded': opp_folded,
+                'aggression': opp_aggression,
+                'position': positions[i]
+            })
+        opp_seat_idx += 1
+
+# Next hand button
+if st.sidebar.button('Next Hand'):
+    st.session_state.dealer_idx = (st.session_state.dealer_idx + 1) % total_players
+    st.experimental_rerun()
 
 # Prepare input tensors
 card_input = np.zeros((1, 2, 7))
@@ -240,8 +338,6 @@ stage_onehot = np.zeros(4)
 stage_idx = ['Preflop', 'Flop', 'Turn', 'River'].index(stage)
 stage_onehot[stage_idx] = 1
 
-position_bonus = {'Early': 0.0, 'Middle': 0.1, 'Late': 0.2}[position]
-
 # Aggregate opponent data
 avg_opp_stack = sum(opp['stack'] for opp in opponent_data) / max(1, num_opponents)
 avg_opp_bet = sum(opp['bet'] for opp in opponent_data if not opp['folded']) / max(1, sum(1 for opp in opponent_data if not opp['folded']))
@@ -263,6 +359,76 @@ state_features = [
 
 state_input = torch.FloatTensor([state_features]).to(device)
 
+# Table visualization
+def create_table_visualization():
+    fig = go.Figure()
+    radius = 2
+    center_x, center_y = 0, 0
+    theta = np.linspace(0, 2 * np.pi, total_players, endpoint=False)
+    x = [center_x + radius * math.cos(t) for t in theta]
+    y = [center_y + radius * math.sin(t) for t in theta]
+    
+    # Table
+    fig.add_shape(type="circle", xref="x", yref="y", x0=-radius, y0=-radius, x1=radius, y1=radius, fillcolor="green", line_color="black")
+    
+    # Seats
+    for i in range(total_players):
+        label = 'User' if i == user_seat_idx else f'Opp {seat_to_opp.get(i)+1}'
+        color = 'yellow' if i == user_seat_idx else 'blue'
+        markers = []
+        if i == dealer_idx:
+            markers.append('D')
+        if i == sb_idx:
+            markers.append('SB')
+        if i == bb_idx:
+            markers.append('BB')
+        marker_text = ', '.join(markers) if markers else ''
+        fig.add_trace(go.Scatter(
+            x=[x[i]], y=[y[i]], mode='markers+text',
+            marker=dict(size=20, color=color),
+            text=f"{label}<br>{positions[i]}<br>{marker_text}",
+            textposition="middle center",
+            showlegend=False
+        ))
+    
+    fig.update_layout(
+        title="Table Layout",
+        xaxis=dict(visible=False, scaleanchor="y", scaleratio=1),
+        yaxis=dict(visible=False),
+        width=400,
+        height=400,
+        margin=dict(l=20, r=20, t=40, b=20)
+    )
+    return fig
+
+# Action order
+def get_action_order():
+    active_players = [i for i in range(total_players) if i == user_seat_idx or not opponent_data[seat_to_opp.get(i, 0)]['folded']]
+    preflop_order = []
+    postflop_order = []
+    
+    # Preflop: Start with UTG (or SB in heads-up)
+    if total_players == 2:
+        start_idx = sb_idx
+    else:
+        start_idx = (bb_idx + 1) % total_players
+    for i in range(len(active_players)):
+        idx = (start_idx + i) % total_players
+        if idx in active_players:
+            preflop_order.append(idx)
+    
+    # Postflop: Start with SB
+    start_idx = sb_idx
+    for i in range(len(active_players)):
+        idx = (start_idx + i) % total_players
+        if idx in active_players:
+            postflop_order.append(idx)
+    
+    return preflop_order, postflop_order
+
+preflop_order, postflop_order = get_action_order()
+next_to_act = preflop_order[0] if stage == 'Preflop' else postflop_order[0]
+
 # Display user inputs
 st.subheader('Your Inputs')
 col1, col2 = st.columns([2, 1])
@@ -274,15 +440,30 @@ with col1:
         'Pot Size ($)': pot,
         'Your Stack ($)': player_stack,
         'Your Bet ($)': player_bet,
+        'Small Blind ($)': small_blind,
+        'Big Blind ($)': big_blind,
         'Avg Opponent Stack ($)': avg_opp_stack,
         'Avg Opponent Bet ($)': avg_opp_bet,
         'Any Opponent Folded': any_opp_folded,
         'Avg Opponent Aggression': avg_opp_aggression,
         'Game Stage': stage,
-        'Position': position,
-        'Number of Opponents': num_opponents
+        'Your Position': user_position,
+        'Number of Opponents': num_opponents,
+        'Dealer': dealer
     }
     st.write(pd.DataFrame([input_data]))
+    
+    # Table visualization
+    st.plotly_chart(create_table_visualization())
+    
+    # Action order
+    st.write('**Action Order**')
+    preflop_labels = ['User' if i == user_seat_idx else f'Opp {seat_to_opp[i]+1} ({positions[i]})' for i in preflop_order]
+    postflop_labels = ['User' if i == user_seat_idx else f'Opp {seat_to_opp[i]+1} ({positions[i]})' for i in postflop_order]
+    next_label = 'User' if next_to_act == user_seat_idx else f'Opp {seat_to_opp[next_to_act]+1} ({positions[next_to_act]})'
+    st.write(f"- **Preflop**: {', '.join(preflop_labels)}")
+    st.write(f"- **Postflop**: {', '.join(postflop_labels)}")
+    st.write(f"- **Next to Act**: {next_label}")
 
 # Display cards
 with col2:
@@ -311,6 +492,7 @@ prediction_entry = {
     'Hole Cards': ', '.join([Card.int_to_pretty_str(c) for c in hole_cards]),
     'Community Cards': ', '.join([Card.int_to_pretty_str(c) for c in community_cards]) if community_cards else 'None',
     'Stage': stage,
+    'Your Position': user_position,
     'Recommended Action': ['Fold', 'Call', 'Raise'][action],
     'Equity': f'{equity:.2%}',
     'Hand Strength Percentile': f'{percentile:.1f}%'
@@ -350,6 +532,18 @@ st.subheader('In-Depth Analysis')
 pot_odds = avg_opp_bet / (pot + avg_opp_bet) if avg_opp_bet > 0 else 0
 st.write(f'**Pot Odds**: {pot_odds:.2%} (you need {pot_odds:.2%} equity to break even on a call)')
 
+# Position-specific insight
+position_insights = {
+    'Small Blind': 'As the Small Blind, you’ve already invested half the big blind, making calls more attractive, but you act first postflop, which is a disadvantage.',
+    'Big Blind': 'As the Big Blind, you’ve invested the full big blind, incentivizing you to defend against raises, but you act second postflop.',
+    'UTG': 'As Under the Gun, you act first preflop and early postflop, requiring stronger hands to compensate for the positional disadvantage.',
+    'UTG+1': 'As UTG+1, you act early preflop and postflop, needing strong hands due to limited information on opponents’ actions.',
+    'Cutoff': 'As the Cutoff, you act late preflop and often postflop, allowing wider ranges and more aggressive plays.',
+    'Button': 'As the Button, you act last postflop, giving a significant advantage to play a wider range and control the pot.',
+    'Big Blind/Button': 'As the Big Blind and Button (heads-up), you’ve invested the big blind and act last postflop, offering both commitment and positional advantage.'
+}
+st.write(f'**Position Insight ({user_position})**: {position_insights.get(user_position, "Your position influences your strategy based on action order.")}')
+
 # Stage-specific insights
 stage_insights = {
     'Preflop': f"In the preflop stage, your hand's equity ({equity:.2%}) is based on starting hand strength against {num_opponents} opponent(s). With a percentile of {percentile:.1f}%, your hand is {'strong' if percentile > 80 else 'medium' if percentile > 50 else 'weak'}. {'Consider raising with strong hands to build the pot.' if percentile > 80 else 'Play cautiously unless position or odds favor you.'}",
@@ -387,6 +581,11 @@ for i, action_name in enumerate(action_names):
         else:
             expected_value = (equity * (pot + raise_amount)) - ((1 - equity) * (avg_opp_bet + raise_amount))
             analysis = f"Raising with {equity:.2%} equity is risky against aggressive opponents. Expected value: ${expected_value:.2f}."
+
+    if action_name == 'Call' and user_position in ['Small Blind', 'Big Blind']:
+        analysis += f" As {user_position}, you’ve already invested {'half the big blind' if user_position == 'Small Blind' else 'the big blind'}, making calling more attractive."
+    elif action_name == 'Raise' and user_position in ['Cutoff', 'Button']:
+        analysis += f" As {user_position}, your late position allows more aggressive raises due to acting last postflop."
 
     st.write(f"- **{action_name}**: {analysis}")
 
