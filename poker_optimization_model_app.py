@@ -193,7 +193,7 @@ def create_table_visualization(dealer_idx, user_seat_idx, total_players, positio
                 marker=dict(size=25, color=color),
                 text=f"{label}<br>{positions[i]}<br>{marker_text}",
                 textposition="middle center",
-                textfont=dict(color="white", size=12),
+                textfont=dict(color="white", size=12),  # White text for visibility
                 showlegend=False
             ))
         fig.update_layout(
@@ -415,22 +415,35 @@ if st.session_state.table_setup:
 
     # Action order
     def get_action_order():
+        """
+        Determines the action order for preflop and postflop, moving clockwise.
+        - Preflop: Starts with player to the left of BB (UTG or SB in heads-up).
+        - Postflop: Starts with SB, with BB last if active.
+        """
         active_players = [i for i in range(total_players) if i == user_seat_idx or not opponent_data[seat_to_opp.get(i, 0)]['folded']]
+        if not active_players:
+            return [], []
+        
         preflop_order = []
         postflop_order = []
+        
+        # Preflop: Start to the left of BB (UTG or SB in heads-up)
         if total_players == 2:
-            start_idx = sb_idx
+            preflop_start_idx = sb_idx
         else:
-            start_idx = (bb_idx + 1) % total_players
-        for i in range(len(active_players)):
-            idx = (start_idx + i) % total_players
+            preflop_start_idx = (bb_idx + 1) % total_players
+        for i in range(total_players):
+            idx = (preflop_start_idx + i) % total_players
             if idx in active_players:
                 preflop_order.append(idx)
-        start_idx = sb_idx
-        for i in range(len(active_players)):
-            idx = (start_idx + i) % total_players
+        
+        # Postflop: Start with SB, BB last if active
+        postflop_start_idx = sb_idx
+        for i in range(total_players):
+            idx = (postflop_start_idx + i) % total_players
             if idx in active_players:
                 postflop_order.append(idx)
+        
         return preflop_order, postflop_order
 
     preflop_order, postflop_order = get_action_order()
