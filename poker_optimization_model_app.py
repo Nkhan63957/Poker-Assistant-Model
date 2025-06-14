@@ -7,6 +7,15 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import math
+import traceback
+
+# Debug: Confirm Plotly import
+try:
+    import plotly
+    st.write("Plotly imported successfully!")
+except ImportError:
+    st.error("Plotly import failed. Please ensure 'plotly==5.22.0' is in requirements.txt.")
+    st.stop()
 
 # Define PokerQNetwork class
 class PokerQNetwork(nn.Module):
@@ -109,6 +118,8 @@ if 'table_setup' not in st.session_state:
     st.session_state.table_setup = False
 if 'opp_aggressions' not in st.session_state:
     st.session_state.opp_aggressions = {}
+if 'opp_stacks' not in st.session_state:
+    st.session_state.opp_stacks = []
 
 # Load the model
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -120,64 +131,6 @@ try:
 except FileNotFoundError:
     st.error("Model file 'best_poker_model.pth' not found. Please ensure it's in the same directory.")
     st.stop()
-
-# Sidebar: Table Setup
-st.sidebar.header('Table Setup')
-num_opponents = st.sidebar.selectbox('Number of Opponents', [1, 2, 3, 4, 5], index=0)
-total_players = num_opponents + 1
-
-user_seat = st.sidebar.selectbox('Your Seat', [f'Seat {i+1}' for i in range(total_players)], index=st.session_state.user_seat_idx)
-user_seat_idx = int(user_seat.split()[-1]) - 1
-st.session_state.user_seat_idx = user_seat_idx
-
-dealer_options = ['User'] + [f'Opp {i+1}' for i in range(num_opponents)]
-dealer = st.sidebar.selectbox('Dealer', dealer_options, index=st.session_state.dealer_idx)
-dealer_idx = 0 if dealer == 'User' else int(dealer.split()[-1])
-st.session_state.dealer_idx = dealer_idx
-
-small_blind = st.sidebar.number_input('Small Blind ($)', min_value=0, max_value=100, value=5, step=1)
-big_blind = st.sidebar.number_input('Big Blind ($)', min_value=small_blind, max_value=200, value=10, step=1)
-if big_blind < small_blind:
-    st.error("Big blind must be at least as large as small blind.")
-    st.rerun()
-
-player_stack = st.sidebar.number_input('Your Stack ($)', min_value=0, max_value=10000, value=1000, step=1)
-opp_stacks = []
-for i in range(num_opponents):
-    opp_stack = st.sidebar.number_input(f'Opp {i+1} Stack ($)', min_value=0, max_value=10000, value=1000, step=1, key=f'opp_stack_setup_{i}')
-    opp_stacks.append(opp_stack)
-
-# Validate blinds against stacks
-sb_idx = (dealer_idx + 1) % total_players
-bb_idx = (dealer_idx + 2) % total_players
-if user_seat_idx == sb_idx and small_blind > player_stack:
-    st.error("Small blind exceeds your stack.")
-    st.rerun()
-if user_seat_idx == bb_idx and big_blind > player_stack:
-    st.error("Big blind exceeds your stack.")
-    st.rerun()
-for i, opp_stack in enumerate(opp_stacks):
-    opp_seat = [j for j in range(total_players) if j != user_seat_idx][i]
-    if opp_seat == sb_idx and small_blind > opp_stack:
-        st.error(f"Small blind exceeds Opp {i+1}'s stack.")
-        st.rerun()
-    if opp_seat == bb_idx and big_blind > opp_stack:
-        st.error(f"Big blind exceeds Opp {i+1}'s stack.")
-        st.rerun()
-
-# Confirm setup
-if st.sidebar.button('Confirm Setup'):
-    st.session_state.table_setup = True
-    # Initialize aggressions
-    st.session_state.opp_aggressions = {f'opp_{i}': 0.5 for i in range(num_opponents)}
-    st.rerun()
-
-if st.sidebar.button('Reset Table'):
-    st.session_state.table_setup = False
-    st.session_state.dealer_idx = 0
-    st.session_state.user_seat_idx = 0
-    st.session_state.opp_aggressions = {}
-    st.rerun()
 
 # Calculate positions
 def calculate_positions(dealer_idx, total_players):
@@ -197,19 +150,108 @@ def calculate_positions(dealer_idx, total_players):
         positions.append(pos)
     return positions
 
-positions = calculate_positions(dealer_idx, total_players)
-user_position = positions[user_seat_idx]
-position_bonus = 0.0 if user_position in ['Small Blind', 'Big Blind'] else 0.1 if user_position.startswith('UTG') else 0.2
-
 # Table visualization
-def create_table_visualization():
-    fig = go.Figure()
-    radius = 2
-    center_x, center_y = 0, 0
-    theta = np.linspace(0, 2 * np.pi, total_players, endpoint=False)
-    x = [center_x + radius * math.cos(t) for t in theta]
-    y = [center_y + radius * math.sin(t) for t in theta]
-    fig.add_shape(type="circle", xref="x", yref="y", x0=-radius, y0=-radius, x1=radius, y1=radius, fillcolor="green", line_color="black")
+def create_table_visualization(dealer_idx, user_seat_idx, total_players, positions):
+    try:
+        fig = go.Figure()
+        radius = 2
+        center_x, center_y = 0, 0
+        theta = np.linspace(0, 2 * np.pi, total_players, endpoint=False)
+        x = [center_x + radius * math.cos(t) for t in theta]
+        y = [center_y + radius * math.sin(t) for t in theta]
+        fig.add_shape(type="circle", xref="x", yref="y", x0=-radius, y0=-radius, x1=radius, y1=radius, fillcolor="green", line_color="black")
+        seat_to_opp = {}
+        opp_idx = 0
+        for i in range(total_players):
+            if i != user_seat_idx:
+                seat_to_opp[i] = opp_idx
+                opp_idx += 1
+        sb_idx = (dealer_idx + 1) % total_players
+        bb_idx = (dealer_idx + 2) % total_players
+        for i in range(total_players):
+            label = 'User' if i == user_seat_idx else f'Opp {seat_to_opp.get(i)+1}'
+            color = 'yellow' if i == user_seat_idx else 'blue'
+            markers = []
+            if i == dealer_idx:
+                markers.append('D')
+            if i == sb_idx:
+                markers.append('SB')
+            if i == bb_idx:
+                markers.append('BB')
+            marker_text = ', '.join(markers) if markers else ''
+            fig.add_trace(go.Scatter(
+                x=[x[i]], y=[y[i]], mode='markers+text',
+                marker=dict(size=20, color=color),
+                text=f"{label}<br>{positions[i]}<br>{marker_text}",
+                textposition="middle center",
+                showlegend=False
+            ))
+        fig.update_layout(
+            title="Table Layout",
+            xaxis=dict(visible=False, scaleanchor="y", scaleratio=1),
+            yaxis=dict(visible=False),
+            width=400,
+            height=400,
+            margin=dict(l=20, r=20, t=40, b=20)
+        )
+        return fig, None
+    except Exception as e:
+        return None, f"Failed to render table: {str(e)}\n{traceback.format_exc()}"
+
+# Sidebar: Table Setup
+st.sidebar.header('Table Setup')
+st.sidebar.write("Configure the number of opponents, your seat, dealer, blinds, and stacks.")
+num_opponents = st.sidebar.selectbox('Number of Opponents', [1, 2, 3, 4, 5], index=0)
+total_players = num_opponents + 1
+
+user_seat = st.sidebar.selectbox('Your Seat', [f'Seat {i+1}' for i in range(total_players)], index=st.session_state.user_seat_idx)
+user_seat_idx = int(user_seat.split()[-1]) - 1
+st.session_state.user_seat_idx = user_seat_idx
+
+dealer_options = ['User'] + [f'Opp {i+1}' for i in range(num_opponents)]
+dealer = st.sidebar.selectbox('Dealer', dealer_options, index=st.session_state.dealer_idx)
+dealer_idx = 0 if dealer == 'User' else int(dealer.split()[-1])
+st.session_state.dealer_idx = dealer_idx
+
+small_blind = st.sidebar.number_input('Small Blind ($)', min_value=0, max_value=100, value=5, step=1)
+big_blind = st.sidebar.number_input('Big Blind ($)', min_value=small_blind, max_value=200, value=10, step=1)
+if big_blind < small_blind:
+    st.error("Big blind must be at least as large as small blind.")
+    st.stop()
+
+player_stack = st.sidebar.number_input('Your Stack ($)', min_value=0, max_value=10000, value=1000, step=1)
+opp_stacks = []
+for i in range(num_opponents):
+    opp_stack = st.sidebar.number_input(f'Opp {i+1} Stack ($)', min_value=0, max_value=10000, value=1000, step=1, key=f'opp_stack_setup_{i}')
+    opp_stacks.append(opp_stack)
+
+# Validate blinds against stacks
+sb_idx = (dealer_idx + 1) % total_players
+bb_idx = (dealer_idx + 2) % total_players
+if user_seat_idx == sb_idx and small_blind > player_stack:
+    st.error("Small blind exceeds your stack.")
+    st.stop()
+if user_seat_idx == bb_idx and big_blind > player_stack:
+    st.error("Big blind exceeds your stack.")
+    st.stop()
+for i, opp_stack in enumerate(opp_stacks):
+    opp_seat = [j for j in range(total_players) if j != user_seat_idx][i]
+    if opp_seat == sb_idx and small_blind > opp_stack:
+        st.error(f"Small blind exceeds Opp {i+1}'s stack.")
+        st.stop()
+    if opp_seat == bb_idx and big_blind > opp_stack:
+        st.error(f"Big blind exceeds Opp {i+1}'s stack.")
+        st.stop()
+
+# Display table preview
+st.subheader('Table Preview')
+positions = calculate_positions(dealer_idx, total_players)
+fig, error = create_table_visualization(dealer_idx, user_seat_idx, total_players, positions)
+if fig:
+    st.plotly_chart(fig, use_container_width=True)
+else:
+    st.error(f"Unable to render circular table. Error: {error}")
+    st.write("Fallback: Seat positions (clockwise):")
     seat_to_opp = {}
     opp_idx = 0
     for i in range(total_players):
@@ -218,7 +260,6 @@ def create_table_visualization():
             opp_idx += 1
     for i in range(total_players):
         label = 'User' if i == user_seat_idx else f'Opp {seat_to_opp.get(i)+1}'
-        color = 'yellow' if i == user_seat_idx else 'blue'
         markers = []
         if i == dealer_idx:
             markers.append('D')
@@ -227,24 +268,24 @@ def create_table_visualization():
         if i == bb_idx:
             markers.append('BB')
         marker_text = ', '.join(markers) if markers else ''
-        fig.add_trace(go.Scatter(
-            x=[x[i]], y=[y[i]], mode='markers+text',
-            marker=dict(size=20, color=color),
-            text=f"{label}<br>{positions[i]}<br>{marker_text}",
-            textposition="middle center",
-            showlegend=False
-        ))
-    fig.update_layout(
-        title="Table Layout",
-        xaxis=dict(visible=False, scaleanchor="y", scaleratio=1),
-        yaxis=dict(visible=False),
-        width=400,
-        height=400,
-        margin=dict(l=20, r=20, t=40, b=20)
-    )
-    return fig
+        st.write(f"Seat {i+1}: {label}, {positions[i]}, {marker_text}")
 
-# Sidebar: Game Setup
+# Confirm setup
+if st.sidebar.button('Confirm Setup'):
+    st.session_state.table_setup = True
+    st.session_state.opp_aggressions = {f'opp_{i}': 0.5 for i in range(num_opponents)}
+    st.session_state.opp_stacks = opp_stacks
+    st.rerun()
+
+if st.sidebar.button('Reset Table'):
+    st.session_state.table_setup = False
+    st.session_state.dealer_idx = 0
+    st.session_state.user_seat_idx = 0
+    st.session_state.opp_aggressions = {}
+    st.session_state.opp_stacks = []
+    st.rerun()
+
+# Game Setup and Analysis
 if st.session_state.table_setup:
     st.sidebar.header('Game Setup')
     suits = ['♥', '♠', '♦', '♣']
@@ -292,10 +333,10 @@ if st.session_state.table_setup:
     # Validate card selections
     if len(selected_cards) != len(set(selected_cards)):
         st.error("Duplicate cards selected. Please choose unique cards.")
-        st.rerun()
+        st.stop()
     if len(hole_cards) != 2:
         st.error("Please select both hole cards.")
-        st.rerun()
+        st.stop()
 
     # Game state
     st.sidebar.subheader('Game State')
@@ -303,7 +344,7 @@ if st.session_state.table_setup:
     player_bet = st.sidebar.number_input('Your Current Bet ($)', min_value=0, max_value=player_stack, value=0, step=1)
     if player_bet > player_stack:
         st.error("Your bet cannot exceed your stack.")
-        st.rerun()
+        st.stop()
 
     # Opponent actions
     opponent_data = []
@@ -313,12 +354,12 @@ if st.session_state.table_setup:
         if i != user_seat_idx:
             seat_to_opp[i] = opp_idx
             with st.sidebar.expander(f"Opp {opp_idx+1} ({positions[i]})"):
-                opp_stack = opp_stacks[opp_idx]
+                opp_stack = st.session_state.opp_stacks[opp_idx]
                 opp_bet = st.number_input(f'Opp {opp_idx+1} Bet ($)', min_value=0, max_value=opp_stack, value=10, step=1, key=f'opp_bet_{opp_idx}')
                 opp_folded = st.checkbox(f'Opp {opp_idx+1} Folded', value=False, key=f'opp_folded_{opp_idx}')
                 if opp_bet > opp_stack:
                     st.error(f"Opp {opp_idx+1}'s bet cannot exceed their stack.")
-                    st.rerun()
+                    st.stop()
                 opponent_data.append({
                     'stack': opp_stack,
                     'bet': opp_bet,
@@ -415,7 +456,7 @@ if st.session_state.table_setup:
         avg_opp_aggression,
         stage_onehot[0],
         stage_onehot[1],
-        position_bonus
+        position_bonus := (0.0 if positions[user_seat_idx] in ['Small Blind', 'Big Blind'] else 0.1 if positions[user_seat_idx].startswith('UTG') else 0.2)
     ]
     state_input = torch.FloatTensor([state_features]).to(device)
 
@@ -424,7 +465,11 @@ if st.session_state.table_setup:
     col1, col2 = st.columns([2, 1])
     with col1:
         st.write('**Table Layout**')
-        st.plotly_chart(create_table_visualization())
+        fig, error = create_table_visualization(dealer_idx, user_seat_idx, total_players, positions)
+        if fig:
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.error(f"Unable to render circular table. Error: {error}")
         st.write('**Game State**')
         input_data = {
             'Pot Size ($)': pot,
@@ -437,7 +482,7 @@ if st.session_state.table_setup:
             'Avg Opponent Aggression': avg_opp_aggression,
             'Any Opponent Folded': any_opp_folded,
             'Game Stage': stage,
-            'Your Position': user_position,
+            'Your Position': positions[user_seat_idx],
             'Number of Opponents': num_opponents,
             'Dealer': dealer
         }
@@ -476,7 +521,7 @@ if st.session_state.table_setup:
         'Hole Cards': ', '.join([Card.int_to_pretty_str(c) for c in hole_cards]),
         'Community Cards': ', '.join([Card.int_to_pretty_str(c) for c in community_cards]) if community_cards else 'None',
         'Stage': stage,
-        'Your Position': user_position,
+        'Your Position': positions[user_seat_idx],
         'Recommended Action': ['Fold', 'Call', 'Raise'][action],
         'Equity': f'{equity:.2%}',
         'Hand Strength Percentile': f'{percentile:.1f}%'
@@ -507,7 +552,7 @@ if st.session_state.table_setup:
     )
     fig.update_traces(textposition='auto')
     fig.update_yaxes(range=[0, 1], tickformat='.0%')
-    st.plotly_chart(fig)
+    st.plotly_chart(fig, use_container_width=True)
 
     # In-depth analysis
     st.subheader('In-Depth Analysis')
@@ -523,7 +568,7 @@ if st.session_state.table_setup:
         'Button': 'As the Button, you act last postflop, giving a significant advantage to play a wider range and control the pot.',
         'Big Blind/Button': 'As the Big Blind and Button (heads-up), you’ve invested the big blind and act last postflop, offering both commitment and positional advantage.'
     }
-    st.write(f'**Position Insight ({user_position})**: {position_insights.get(user_position, "Your position influences your strategy based on action order.")}')
+    st.write(f'**Position Insight ({positions[user_seat_idx]})**: {position_insights.get(positions[user_seat_idx], "Your position influences your strategy based on action order.")}')
 
     stage_insights = {
         'Preflop': f"In the preflop stage, your hand's equity ({equity:.2%}) is based on starting hand strength against {num_opponents} opponent(s). With a percentile of {percentile:.1f}%, your hand is {'strong' if percentile > 80 else 'medium' if percentile > 50 else 'weak'}. {'Consider raising with strong hands to build the pot.' if percentile > 80 else 'Play cautiously unless position or odds favor you.'}",
@@ -560,10 +605,10 @@ if st.session_state.table_setup:
             else:
                 expected_value = (equity * (pot + raise_amount)) - ((1 - equity) * (avg_opp_bet + raise_amount))
                 analysis = f"Raising with {equity:.2%} equity is risky against aggressive opponents. Expected value: ${expected_value:.2f}."
-        if action_name == 'Call' and user_position in ['Small Blind', 'Big Blind']:
-            analysis += f" As {user_position}, you’ve invested {'half the big blind' if user_position == 'Small Blind' else 'the big blind'}, making calling more attractive."
-        elif action_name == 'Raise' and user_position in ['Cutoff', 'Button']:
-            analysis += f" As {user_position}, your late position allows more aggressive raises due to acting last postflop."
+        if action_name == 'Call' and positions[user_seat_idx] in ['Small Blind', 'Big Blind']:
+            analysis += f" As {positions[user_seat_idx]}, you’ve invested {'half the big blind' if positions[user_seat_idx] == 'Small Blind' else 'the big blind'}, making calling more attractive."
+        elif action_name == 'Raise' and positions[user_seat_idx] in ['Cutoff', 'Button']:
+            analysis += f" As {positions[user_seat_idx]}, your late position allows more aggressive raises due to acting last postflop."
         st.write(f"- **{action_name}**: {analysis}")
 
     st.subheader('Prediction History (Last 10)')
@@ -572,6 +617,5 @@ if st.session_state.table_setup:
         st.write(history_df)
     else:
         st.write("No predictions yet.")
-
 else:
-    st.write("Please configure the table setup and click 'Confirm Setup' to proceed.")
+    st.write("Configure the table setup in the sidebar and click 'Confirm Setup' to proceed.")
