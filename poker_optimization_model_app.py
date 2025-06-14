@@ -193,7 +193,7 @@ def create_table_visualization(dealer_idx, user_seat_idx, total_players, positio
                 marker=dict(size=25, color=color),
                 text=f"{label}<br>{positions[i]}<br>{marker_text}",
                 textposition="middle center",
-                textfont=dict(color="black", size=12),
+                textfont=dict(color="white", size=12),
                 showlegend=False
             ))
         fig.update_layout(
