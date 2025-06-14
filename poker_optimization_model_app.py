@@ -187,8 +187,8 @@ def create_table_visualization(dealer_idx, user_seat_idx, total_players, positio
         relative_positions = [(i - user_seat_idx) % total_players for i in range(total_players)]
         sorted_indices = [x for _, x in sorted(zip(relative_positions, range(total_players)))]
         
-        sb_idx = (dealer_idx + 1) % total_players
-        bb_idx = (dealer_idx + 2) % total_players
+        sb_idx = (dealer_idx - 1) % total_players
+        bb_idx = (dealer_idx - 2) % total_players
         
         for i in sorted_indices:
             label = 'User' if i == user_seat_idx else f'Opp {seat_to_opp.get(i)+1}'
