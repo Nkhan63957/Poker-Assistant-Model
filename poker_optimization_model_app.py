@@ -159,9 +159,15 @@ def create_table_visualization(dealer_idx, user_seat_idx, total_players, positio
         fig = go.Figure()
         radius = 2
         center_x, center_y = 0, 0
+        
+        # Fix User at bottom middle (270 degrees or 6 o'clock)
         theta = np.linspace(0, 2 * np.pi, total_players, endpoint=False)
-        x = [center_x + radius * math.cos(t) for t in theta]
-        y = [center_y + radius * math.sin(t) for t in theta]
+        user_theta_offset = 2 * np.pi - theta[user_seat_idx]  # Adjust to place User at 270 degrees
+        adjusted_theta = [(t + user_theta_offset) % (2 * np.pi) for t in theta]
+        
+        x = [center_x + radius * math.cos(t) for t in adjusted_theta]
+        y = [center_y + radius * math.sin(t) for t in adjusted_theta]
+        
         fig.add_shape(
             type="circle",
             xref="x", yref="y",
@@ -169,15 +175,22 @@ def create_table_visualization(dealer_idx, user_seat_idx, total_players, positio
             fillcolor="rgba(0, 128, 0, 0.5)",  # Semi-transparent green
             line_color="black"
         )
+        
         seat_to_opp = {}
         opp_idx = 0
         for i in range(total_players):
             if i != user_seat_idx:
                 seat_to_opp[i] = opp_idx
                 opp_idx += 1
+        
+        # Determine relative positions with User as reference (0)
+        relative_positions = [(i - user_seat_idx) % total_players for i in range(total_players)]
+        sorted_indices = [x for _, x in sorted(zip(relative_positions, range(total_players)))]
+        
         sb_idx = (dealer_idx + 1) % total_players
         bb_idx = (dealer_idx + 2) % total_players
-        for i in range(total_players):
+        
+        for i in sorted_indices:
             label = 'User' if i == user_seat_idx else f'Opp {seat_to_opp.get(i)+1}'
             color = 'yellow' if i == user_seat_idx else 'blue'
             markers = []
@@ -196,6 +209,7 @@ def create_table_visualization(dealer_idx, user_seat_idx, total_players, positio
                 textfont=dict(color="white", size=12),  # White text for visibility
                 showlegend=False
             ))
+        
         fig.update_layout(
             title="Table Layout",
             xaxis=dict(visible=False, scaleanchor="y", scaleratio=1),
