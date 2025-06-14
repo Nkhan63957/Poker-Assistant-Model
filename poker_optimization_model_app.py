@@ -190,7 +190,7 @@ def create_table_visualization(dealer_idx, user_seat_idx, total_players, positio
             marker_text = ', '.join(markers) if markers else ''
             fig.add_trace(go.Scatter(
                 x=[x[i]], y=[y[i]], mode='markers+text',
-                marker=dict(size=25, color=color),  # Increased size for clarity
+                marker=dict(size=25, color=color),
                 text=f"{label}<br>{positions[i]}<br>{marker_text}",
                 textposition="middle center",
                 textfont=dict(color="black", size=12),
@@ -203,7 +203,7 @@ def create_table_visualization(dealer_idx, user_seat_idx, total_players, positio
             width=400,
             height=400,
             margin=dict(l=20, r=20, t=40, b=20),
-            paper_bgcolor="rgba(0,0,0,0)",  # Transparent background
+            paper_bgcolor="rgba(0,0,0,0)",
             plot_bgcolor="rgba(0,0,0,0)"
         )
         return fig, None
@@ -575,17 +575,17 @@ if st.session_state.table_setup:
         'Small Blind': 'As the Small Blind, you’ve invested half the big blind, making calls more attractive, but you act first postflop, which is a disadvantage.',
         'Big Blind': 'As the Big Blind, you’ve invested the full big blind, incentivizing you to defend against raises, but you act second postflop.',
         'UTG': 'As Under the Gun, you act first preflop and early postflop, requiring stronger hands to compensate for the positional disadvantage.',
-        'UTG+1': 'As UTG+1, you act early postflop, needing strong hands due to limited information.',
+        'UTG+1': 'As UTG+1, you act early preflop and postflop, needing strong hands due to limited information.',
         'Cutoff': 'As the Cutoff, you act late preflop and often postflop, allowing wider ranges and more aggressive plays.',
         'Button': 'As the Button, you act last postflop, giving a significant advantage to play a wider range and control the pot.',
-        'Big Blind/Button': 'As the Big Blind and Button (heads-up), you’ve invested the big blind and act last.'
+        'Big Blind/Button': 'As the Big Blind and Button (heads-up), you’ve invested the big blind and act last postflop.'
     }
-    st.write(f'**Position Insight ({positions[user_seat_idx]})**: {position_insights.get(positions[user_seat_idx], "Your position")}')
+    st.write(f'**Position Insight ({positions[user_seat_idx]})**: {position_insights.get(positions[user_seat_idx], "Your position influences your strategy.")}')
 
     stage_insights = {
-        'Preflop': f"In the preflop stage, your hand's equity ({equity:.2%}) is based on starting hand strength against {num_opponents} opponent(s). With a percentile of {percentile:.1f}%, your hand is {'strong' if percentile > 80 else 'medium' if percentile > 50 else 'weak'}. {'Consider raising with strong hands to build the pot.' if percentile > 80 else 'Play cautiously unless position or odds favor action.'}",
-        'Flop': f"On the flop, your equity ({equity:.2%}) reflects your hand's strength with three community cards. A percentile of {percentile:.1f}% indicates {'a strong made hand or draw' if percentile > 70 else 'a moderate hand' if percentile > 40 else 'a weak hand or weak draw'}. {'Aggression may be warranted with strong hands.' if percentile > 70 else 'Evaluate draws carefully.'}",
-        'Turn': f"On the turn, your equity ({equity:.2%}) is more defined. Your hand's percentile ({percentile:.1f}% suggests {'a strong hand or draw' if percentile > 65 else 'a marginal hand' if percentile > 35 else 'a weak hand'}). {'Protect strong hands with bets.' if percentile > 65 else 'Be cautious with marginal hands.'}",
+        'Preflop': f"In the preflop stage, your hand's equity ({equity:.2%}) is based on starting hand strength against {num_opponents} opponent(s). With a percentile of {percentile:.1f}%, your hand is {'strong' if percentile > 80 else 'medium' if percentile > 50 else 'weak'}. {'Consider raising with strong hands to build the pot.' if percentile > 80 else 'Play cautiously unless position or odds favor you.'}",
+        'Flop': f"On the flop, your equity ({equity:.2%}) reflects your hand's strength with three community cards. A percentile of {percentile:.1f}% indicates {'a strong made hand or draw' if percentile > 70 else 'a moderate hand' if percentile > 40 else 'a weak hand or weak draw'}. {'Aggression may be warranted with strong hands or draws.' if percentile > 70 else 'Evaluate draws carefully against pot odds.'}",
+        'Turn': f"On the turn, with four community cards, your equity ({equity:.2%}) is more defined. Your hand's percentile ({percentile:.1f}%) suggests {'a strong hand or draw' if percentile > 65 else 'a marginal hand' if percentile > 35 else 'a weak hand'}. {'Protect strong hands with bets; consider folding weak hands unless odds are favorable.' if percentile > 65 else 'Be cautious with marginal hands.'}",
         'River': f"On the river, your hand is fully defined with equity ({equity:.2%}) and percentile ({percentile:.1f}%). This indicates {'a strong hand' if percentile > 60 else 'a medium hand' if percentile > 30 else 'a weak hand'}. {'Value bet strong hands; bluff selectively with weak hands.' if percentile > 60 else 'Check or fold unless pot odds justify a call.'}"
     }
     st.write(f'**Stage Insight ({stage})**: {stage_insights[stage]}')
@@ -604,7 +604,7 @@ if st.session_state.table_setup:
                 expected_value = (equity * pot) - ((1 - equity) * avg_opp_bet)
                 analysis = f"Calling is marginal with {equity:.2%} equity close to {pot_odds:.2%} pot odds. Expected value: ${expected_value:.2f}."
             else:
-                expected_value = (equity * pot) - ((equity - 1)) * avg_opp_bet)
+                expected_value = (equity * pot) - ((1 - equity) * avg_opp_bet)
                 analysis = f"Calling may be unprofitable with {equity:.2%} equity below {pot_odds:.2%} pot odds. Expected value: ${expected_value:.2f}."
         else:  # Raise
             raise_amount = avg_opp_bet * 2 if avg_opp_bet > 0 else 20
@@ -617,10 +617,10 @@ if st.session_state.table_setup:
             else:
                 expected_value = (equity * (pot + raise_amount)) - ((1 - equity) * (avg_opp_bet + raise_amount))
                 analysis = f"Raising with {equity:.2%} equity is risky against aggressive opponents. Expected value: ${expected_value:.2f}."
-            if action_name == 'Call' and positions[user_seat_idx] in ['Small Blind', 'Big Blind']:
-                analysis += f" As {positions[user_seat_idx]}, you’ve invested {'half the big blind' if positions[user_seat_idx] == 'Small Blind' else 'the big blind'}, making calls more attractive."
-            elif action_name == 'Raise' and positions[user_seat_idx] in ['Cutoff', 'Button']:
-                analysis += f" As {positions[user_seat_idx]}, your late position allows more aggressive raises due to acting last postflop."
+        if action_name == 'Call' and positions[user_seat_idx] in ['Small Blind', 'Big Blind']:
+            analysis += f" As {positions[user_seat_idx]}, you’ve invested {'half the big blind' if positions[user_seat_idx] == 'Small Blind' else 'the big blind'}, making calling more attractive."
+        elif action_name == 'Raise' and positions[user_seat_idx] in ['Cutoff', 'Button']:
+            analysis += f" As {positions[user_seat_idx]}, your late position allows more aggressive raises due to acting last postflop."
         st.write(f"- **{action_name}**: {analysis}")
 
     st.subheader('Prediction History (Last 10)')
