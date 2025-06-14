@@ -8,11 +8,15 @@ import plotly.express as px
 import plotly.graph_objects as go
 import math
 import traceback
+import logging
+
+# Set up Streamlit page 
+st.set_page_config(page_title="Advanced Poker AI Predictor", page_icon="🃏", layout="wide")
 
 # Debug: Confirm Plotly import
 try:
     import plotly
-    st.write("Plotly imported successfully!")
+    logging.info("Plotly imported successfully!")
 except ImportError:
     st.error("Plotly import failed. Please ensure 'plotly==5.22.0' is in requirements.txt.")
     st.stop()
@@ -102,8 +106,7 @@ def evaluate_hand(hole_cards, community_cards, num_opponents=1):
     percentile = 100 * (1 - rank / 7462)
     return rank_class, rank, equity, max(0, min(100, percentile))
 
-# Set up Streamlit page
-st.set_page_config(page_title="Advanced Poker AI Predictor", page_icon="🃏", layout="wide")
+# App title and description
 st.title('Advanced Poker AI Predictor')
 st.write('This app uses a deep Q-learning model to predict the best action in Texas Hold\'em, supporting multiple opponents, visual card selection, and detailed analysis.')
 
